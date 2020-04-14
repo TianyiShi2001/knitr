@@ -320,10 +320,10 @@ eng_tikz = function(options) {
 ## GraphViz (dot) and Asymptote are similar
 eng_dot = function(options) {
 
-  # create temporary file
-  f = wd_tempfile('code')
+  # write code to a temp file, and output to another temp file
+  f = wd_tempfile('code'); f2 = wd_tempfile('out')
   write_utf8(code <- options$code, f)
-  on.exit(unlink(f), add = TRUE)
+  on.exit(unlink(c(f, f2)), add = TRUE)
 
   # adapt command to either graphviz or asymptote
   if (options$engine == 'dot') {
@@ -338,17 +338,18 @@ eng_dot = function(options) {
   cmd = sprintf(
     command_string, shQuote(get_engine_path(options$engine.path, options$engine)),
     shQuote(f), ext <- options$fig.ext %n% dev2ext(options$dev),
-    shQuote(paste0(fig <- fig_path(), '.', ext))
+    shQuote(f2 <- paste0(f2, '.', ext))
   )
 
   # generate output
-  dir.create(dirname(fig), recursive = TRUE, showWarnings = FALSE)
-  outf = paste(fig, ext, sep = '.')
+  outf = paste(fig_path(), ext, sep = '.')
+  dir.create(dirname(outf), recursive = TRUE, showWarnings = FALSE)
   unlink(outf)
   extra = if (options$eval) {
-    message('running: ', cmd)
+    if (options$message) message('running: ', cmd)
     system(cmd)
-    if (!file.exists(outf)) stop('failed to compile content');
+    file.rename(f2, outf)
+    if (!file.exists(outf)) stop('Failed to compile the ', options$engine, ' chunk')
     options$fig.num = 1L; options$fig.cur = 1L
     knit_hooks$get('plot')(outf, options)
   }
@@ -373,12 +374,12 @@ eng_highlight = function(options) {
 
 ## save the code
 eng_cat = function(options) {
-  cat2 = function(..., file = '', lang = NULL) {
+  cat2 = function(..., file = '', sep = '\n', lang = NULL) {
     # do not write to stdout like the default behavior of cat()
-    if (!identical(file, '')) cat(..., file = file)
+    if (!identical(file, '')) cat(..., file = file, sep = sep)
   }
   if (options$eval)
-    do.call(cat2, c(list(options$code, sep = '\n'), options$engine.opts))
+    do.call(cat2, c(list(options$code), options$engine.opts))
 
   if (is.null(lang <- options$engine.opts$lang) && is.null(lang <- options$class.source))
     return('')
@@ -388,7 +389,7 @@ eng_cat = function(options) {
 
 ## output the code without processing it
 eng_asis = function(options) {
-  if (options$echo && options$eval) one_string(options$code)
+  if (options$echo) one_string(options$code)
 }
 
 # write a block environment according to the output format
@@ -729,6 +730,27 @@ eng_rust_cargo = function(options) {
 
   engine_output(options, source, output)
 }
+# typescript engine, added by @TianyiShi2001
+eng_ts = function(options) {
+  code <- options$code
+  f = wd_tempfile('code', '.ts')
+  write_utf8(code <- options$code, f)
+  on.exit(unlink(f), add = TRUE)
+  cmd = get_engine_path(options$engine.path, 'ts-node')
+  output = if (options$eval) {
+    tryCatch(
+    system2(cmd, f, stdout = TRUE, stderr = TRUE, env = options$engine.env),
+    error = function(e) {
+      if (!options$error) stop(e)
+      'Error in executing typescript code'
+      }
+    )
+  } else NULL
+
+  if (options$results == 'hide') output = NULL
+
+  engine_output(options, code, output)
+}
 
 # SASS / SCSS engine (contributed via https://github.com/yihui/knitr/pull/1666)
 #
@@ -821,7 +843,7 @@ knit_engines$set(
   cat = eng_cat, asis = eng_asis, stan = eng_stan, block = eng_block,
   block2 = eng_block2, js = eng_js, css = eng_css, sql = eng_sql, go = eng_go,
   rust = eng_rust, cargo = eng_rust_cargo, python = eng_python, julia = eng_julia,
-  sass = eng_sxss, scss = eng_sxss
+  sass = eng_sxss, scss = eng_sxss, ts = eng_ts
 )
 
 cache_engines$set(python = cache_eng_python)
